@@ -32,6 +32,7 @@ type VCDAuthConfig struct {
 	IsSysAdmin   bool   // will be set by GetBearerToken()
 }
 
+//Arvind Bhoj - Replace this whole function as it is
 func (config *VCDAuthConfig) GetBearerToken() (*govcd.VCDClient, *http.Response, error) {
 	href := fmt.Sprintf("%s/api", config.Host)
 	u, err := url.ParseRequestURI(href)
@@ -44,31 +45,29 @@ func (config *VCDAuthConfig) GetBearerToken() (*govcd.VCDClient, *http.Response,
 	klog.Infof("Using VCD OpenAPI version [%s]", vcdClient.Client.APIVersion)
 
 	var resp *http.Response
+	//If RefreshToken is set then use it
 	if config.RefreshToken != "" {
 		// NOTE: for a system admin user using refresh token, the userOrg will still be tenant org.
 		// try setting authentication as a system org user
-		err = vcdClient.SetToken("system",
+		///Arvind Bhoj - Removing attempt to system org
+		//err = vcdClient.SetToken("system",
+		//  govcd.ApiTokenHeader, config.RefreshToken)
+		//if err != nil {
+		//  klog.V(3).Infof("Authenticate as system org user didn't go through. Attempting as [%s] org user: [%v]", config.UserOrg, err)
+		// failed to authenticate as system user. Retry as a tenant user
+		err = vcdClient.SetToken(config.UserOrg,
 			govcd.ApiTokenHeader, config.RefreshToken)
 		if err != nil {
-			klog.V(3).Infof("Authenticate as system org user didn't go through. Attempting as [%s] org user: [%v]", config.UserOrg, err)
-			// failed to authenticate as system user. Retry as a tenant user
-			err = vcdClient.SetToken(config.UserOrg,
-				govcd.ApiTokenHeader, config.RefreshToken)
-			if err != nil {
-				klog.Errorf("failed to authenticate using refresh token")
-				return nil, nil, fmt.Errorf("failed to set authorization header: [%v]", err)
-			}
-		} else {
-			// No error while authenticating with "system" org.
-			// The persisted userorg should be changed to "system"
-			config.UserOrg = "system"
+			klog.Errorf("failed to authenticate using refresh token")
+			return nil, nil, fmt.Errorf("failed to set authorization header: [%v]", err)
 		}
-		config.IsSysAdmin = vcdClient.Client.IsSysAdmin
+
+		config.IsSysAdmin = util.Str2Bool("False") //Arvind Bhoj - No use case to login as provider
 
 		klog.Infof("Running module as sysadmin [%v]", vcdClient.Client.IsSysAdmin)
 		return vcdClient, resp, nil
 	}
-
+	//Else login using username and password
 	resp, err = vcdClient.GetAuthResponse(config.User, config.Password, config.UserOrg)
 	if err != nil {
 		return nil, resp, fmt.Errorf("unable to authenticate [%s/%s] for url [%s]: [%+v] : [%v]",
