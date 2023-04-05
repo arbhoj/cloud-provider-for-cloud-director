@@ -14,7 +14,8 @@ RUN ["make", "build-within-docker"]
 
 ########################################################
 
-FROM photonos-docker-local.artifactory.eng.vmware.com/photon4:4.0-GA
+#FROM photonos-docker-local.artifactory.eng.vmware.com/photon4:4.0-GA
+FROM photon:4.0-20210910
 
 WORKDIR /opt/vcloud/bin
 

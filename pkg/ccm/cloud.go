@@ -12,6 +12,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
+
 	"github.com/vmware/cloud-provider-for-cloud-director/pkg/config"
 	"github.com/vmware/cloud-provider-for-cloud-director/pkg/cpisdk"
 	"github.com/vmware/cloud-provider-for-cloud-director/pkg/vcdsdk"
@@ -27,6 +30,11 @@ import (
 // ProviderName : name of the cloud provider
 const (
 	ProviderName = "vmware-cloud-director"
+	EnvSkipLB    = "CAPVCD_SKIP_LB"
+)
+
+var (
+	SkipLB = Str2Bool(os.Getenv(EnvSkipLB))
 )
 
 // VCDCloudProvider - contains all of the interfaces for our cloud provider
@@ -90,28 +98,29 @@ func newVCDCloudProvider(configReader io.Reader) (cloudProvider.Interface, error
 	if err != nil {
 		klog.Errorf("error adding CPI event [%s] to RDE: [%v]", cpisdk.ClientAuthenticated, err)
 	}
-
 	// setup LB only if the gateway is not NSX-T
 	var lb cloudProvider.LoadBalancer = nil
-	gm, err := vcdsdk.NewGatewayManager(context.Background(), vcdClient, cloudConfig.LB.VDCNetwork, cloudConfig.LB.VIPSubnet, cloudConfig.VCD.VDC)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create GatewayManager: [%v]", err)
-	}
-	if !gm.IsNSXTBackedGateway() {
-		klog.Infof("Gateway of network [%s] not backed by NSX-T. Hence LB will not be initialized.",
-			cloudConfig.LB.VDCNetwork)
-	} else {
-		var oneArm *vcdsdk.OneArm
-		if cloudConfig.LB.OneArm != nil {
-			oneArm = &vcdsdk.OneArm{
-				StartIP: cloudConfig.LB.OneArm.StartIP,
-				EndIP:   cloudConfig.LB.OneArm.EndIP,
-			}
+	// Skip LB if ENV Var "CAPVCD_SKIP_LB" is set
+	if !SkipLB {
+		gm, err := vcdsdk.NewGatewayManager(context.Background(), vcdClient, cloudConfig.LB.VDCNetwork, cloudConfig.LB.VIPSubnet)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create GatewayManager: [%v]", err)
 		}
-		lb = newLoadBalancer(vcdClient, cloudConfig.LB.CertificateAlias, oneArm, cloudConfig.LB.VDCNetwork, cloudConfig.VCD.VDC,
-			cloudConfig.LB.VIPSubnet, cloudConfig.ClusterID, cloudConfig.LB.EnableVirtualServiceSharedIP)
+		if !gm.IsNSXTBackedGateway() {
+			klog.Infof("Gateway of network [%s] not backed by NSX-T. Hence LB will not be initialized.",
+				cloudConfig.LB.VDCNetwork)
+		} else {
+			var oneArm *vcdsdk.OneArm
+			if cloudConfig.LB.OneArm != nil {
+				oneArm = &vcdsdk.OneArm{
+					StartIP: cloudConfig.LB.OneArm.StartIP,
+					EndIP:   cloudConfig.LB.OneArm.EndIP,
+				}
+			}
+			lb = newLoadBalancer(vcdClient, cloudConfig.LB.CertificateAlias, oneArm, cloudConfig.LB.VDCNetwork,
+				cloudConfig.LB.VIPSubnet, cloudConfig.ClusterID, cloudConfig.LB.EnableVirtualServiceSharedIP)
+		}
 	}
-
 	// cache for VM Info with an refresh of elements needed after 1 minute
 	vmInfoCache := newVmInfoCache(vcdClient, cloudConfig.VAppName, time.Minute)
 
@@ -167,13 +176,10 @@ func (vcdCP *VCDCloudProvider) ProviderName() string {
 
 // LoadBalancer returns a loadbalancer interface. Also returns true if the interface is supported, false otherwise.
 func (vcdCP *VCDCloudProvider) LoadBalancer() (cloudProvider.LoadBalancer, bool) {
-
-	if vcdCP.lb == nil {
-		// lb will be nil if the organization network is not backed by NSX-T
-		klog.Infof("service controller will be disabled")
-		return nil, false
+	if !SkipLB { //Arvind Bhoj - Only return loadbalancer if SkipLB is not set to true
+		return vcdCP.lb, true
 	}
-	return vcdCP.lb, true
+	return vcdCP.lb, false
 }
 
 // Instances returns an instances interface. Also returns true if the interface is supported, false otherwise.
@@ -199,4 +205,8 @@ func (vcdCP *VCDCloudProvider) Routes() (cloudProvider.Routes, bool) {
 // HasClusterID provides an opportunity for cloud-provider-specific code to process DNS settings for pods.
 func (vcdCP *VCDCloudProvider) HasClusterID() bool {
 	return false
+}
+
+func Str2Bool(val string) bool {
+	return strings.ToLower(val) == "true"
 }
